@@ -1,0 +1,12 @@
+listen_address: ":9001"
+
+checks:
+  - name: otel-collector
+    url: "http://127.0.0.1:13133/health"
+    expected_status: 200
+    timeout: 1s
+
+  - name: parseable
+    url: "http://127.0.0.1:8000/api/v1/liveness"
+    expected_status: 200
+    timeout: 1s
