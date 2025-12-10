@@ -8,7 +8,9 @@ single endpoint. Useful for envoy health checks.
 
 # Features
 - Load checks from a YAML config file
-- HTTP health endpoint at `/healthz`
+- HTTP health endpoints:
+    - `/healthz` — run all checks in all named groups (aggregate)
+    - `/healthz/<name>` — run only the checks in the named group `<name>`
 - CLI flags:
     - `--config` (default: `config.yml`) \- path to config file; single positional argument is accepted as a fallback
     - `--version` \- print version and exit
@@ -17,18 +19,25 @@ single endpoint. Useful for envoy health checks.
 ~~~yaml
 listen_address: ":9001"
 checks:
-  - name: google
-    url: https://www.google.com
-    expected_status: 200
-    timeout: 2s
-  - name: example
-    url: https://example.com
-    expected_status: 200
-    timeout: 1s
+  public_sites:
+    - name: google
+      url: https://www.google.com
+      expected_status: 200
+      timeout: 2s
+    - name: example
+      url: https://example.com
+      expected_status: 200
+      timeout: 1s
+  internal_sites:
+    - name: web
+      url: https://web.internal.example.com
+      expected_status: 200
+      timeout: 2s
 ~~~
 
 Notes:
 - `listen_address` defaults to `:9001` if omitted.
+- checks is a mapping of group names to lists of checks.
 - `timeout` values use Go duration format (for example `500ms`, `1s`, `2s`).
 - `expected_status` defaults to `200` if omitted.
 
@@ -53,16 +62,21 @@ Specify config path:
 
 Print version:
 ~~~bash
-./health-aggregator --version
+./healthz --version
 ~~~
 
 # Health check
-Request:
+Aggregate - all groups
 ~~~bash
-curl -sS -w "%{http_code}\n" http://localhost:9001/healthz
+curl -s http://localhost:9001/healthz
 ~~~
+Returns `200` and body `OK` when all checks pass for all groups. Returns `500` and body `FAIL` if any check fails.
 
-Returns `200` and body `OK` when all checks pass; returns `500` and body `FAIL` if any check fails.
+Named group (run only otel1):
+~~~bash
+curl -s http://localhost:9001/healthz/public_sites
+~~~
+Returns 200 and body OK when all checks in the public_sites group pass. Returns 500 and body FAIL on the first failing check.
 
-## License
+# License
 GPL-3.0 License

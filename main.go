@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -22,8 +23,8 @@ type Check struct {
 }
 
 type Config struct {
-	ListenAddress string  `yaml:"listen_address"`
-	Checks        []Check `yaml:"checks"`
+	ListenAddress string             `yaml:"listen_address"`
+	Checks        map[string][]Check `yaml:"checks"`
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -39,6 +40,10 @@ func loadConfig(path string) (*Config, error) {
 
 	if cfg.ListenAddress == "" {
 		cfg.ListenAddress = ":9001"
+	}
+
+	if cfg.Checks == nil {
+		cfg.Checks = make(map[string][]Check)
 	}
 
 	return &cfg, nil
@@ -76,7 +81,6 @@ func main() {
 	}
 
 	configPath := *configFlag
-	// allow single positional argument as a fallback for backward compatibility
 	if configPath == "config.yml" && flag.NArg() > 0 {
 		configPath = flag.Arg(0)
 	}
@@ -86,17 +90,57 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	log.Printf("Version %s Loaded %d checks from %s", version, len(cfg.Checks), configPath)
+	totalChecks := 0
+	for name, list := range cfg.Checks {
+		log.Printf("Loaded %d checks for %s", len(list), name)
+		totalChecks += len(list)
+	}
+	log.Printf("Loaded total %d checks from %s", totalChecks, configPath)
 
+	// aggregate handler for all checks
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		for _, ch := range cfg.Checks {
+		if r.URL.Path != "/healthz" && r.URL.Path != "/healthz/" {
+			http.NotFound(w, r)
+			return
+		}
+		for groupName, checks := range cfg.Checks {
+			for _, ch := range checks {
+				if err := checkURL(ch); err != nil {
+					log.Printf("Health check failed (%s/%s): %v", groupName, ch.Name, err)
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write([]byte("FAIL\n"))
+					return
+				}
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK\n"))
+	})
+
+	// handler for named groups: /healthz/<name>
+	http.HandleFunc("/healthz/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/healthz/")
+		if name == "" {
+			// no name provided, treat as aggregate
+			http.Redirect(w, r, "/healthz", http.StatusSeeOther)
+			return
+		}
+
+		checks, ok := cfg.Checks[name]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+
+		for _, ch := range checks {
 			if err := checkURL(ch); err != nil {
-				log.Printf("Health check failed: %v", err)
+				log.Printf("Health check failed (%s/%s): %v", name, ch.Name, err)
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte("FAIL\n"))
 				return
 			}
 		}
+
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK\n"))
 	})
